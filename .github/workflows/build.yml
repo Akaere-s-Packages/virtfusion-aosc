@@ -1,0 +1,48 @@
+name: Build and test image
+
+# Test-only pipeline: builds the image and boot-tests it. Nothing is
+# uploaded, released, or cached.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * 1" # weekly, catches breakage from upstream AOSC OS updates
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      WORK_DIR: /mnt/aosc-work
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Install host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            qemu-system-x86 qemu-utils ovmf xorriso jq curl xz-utils openssh-client
+
+      - name: Build image
+        run: sudo --preserve-env=WORK_DIR ./build.sh
+
+      - name: Boot test (BIOS, network-config v2)
+        run: ./test/boot-test.sh output/aosc-os-cloud-amd64.qcow2 bios 2
+
+      - name: Boot test (UEFI, network-config v1)
+        run: ./test/boot-test.sh output/aosc-os-cloud-amd64.qcow2 uefi 1

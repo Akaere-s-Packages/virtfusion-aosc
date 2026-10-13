@@ -1,0 +1,68 @@
+# aoscbootstrap recipe for the AOSC OS cloud image (one package per line).
+# Stub/base packages from aosc-mainline.toml (apt, systemd, shadow, ...) are always installed.
+# aoscbootstrap also installs Recommends: check the size impact before adding packages
+# (e.g. man-db alone pulls in ~1.5 GiB through groff's recommendations).
+
+# System
+aosc-os-presets-base
+core-base
+systemd
+dbus
+networkmanager
+sudo
+shadow
+oma
+apt
+
+# Boot
+linux+kernel
+dracut-ng
+grub
+e2fsprogs
+dosfstools
+gptfdisk
+
+# Cloud / VirtFusion integration
+cloud-init
+# Not a dependency of AOSC's cloud-init package, but its systemd stage units
+# talk to cloud-init-main through `nc -U`; without it cloud-init does nothing.
+netcat
+# Provides /usr/bin/hostname, which cloud-init's hostname modules call.
+inetutils
+cloud-utils
+qemu-guest-agent
+openssh
+
+# Admin essentials
+bash-completion
+ca-certs
+coreutils
+curl
+diffutils
+ethtool
+file
+findutils
+gawk
+grep
+gzip
+htop
+iproute2
+iputils
+kmod
+less
+lsof
+nano
+pciutils
+procps
+psmisc
+rsync
+sed
+tar
+tmux
+tzdata
+unzip
+util-linux
+wget
+which
+xz
+zstd
