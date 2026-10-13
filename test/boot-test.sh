@@ -183,21 +183,13 @@ if [[ -n ${ARTIFACT_DIR:-} ]]; then
 	guest "dpkg-query -W -f '\${Package}\t\${Version}\n'" | sort >"$ARTIFACT_DIR/packages.tsv"
 	guest 'cat /etc/os-release; echo "KERNEL=$(uname -r)"; echo "CLOUD_INIT=$(cloud-init --version 2>&1 | cut -d" " -f2)"' \
 		>"$ARTIFACT_DIR/system.env"
-	# Draw a summary on the VGA console (what VirtFusion's VNC shows), then capture it.
+	# Draw a summary plus fastfetch on the VGA console (what VirtFusion's VNC shows), then capture it.
 	guest "{
 		printf '\033[2J\033[H'
 		echo '=== AOSC OS cloud image: boot test passed ($FIRMWARE, network-config v$NET_VERSION) ==='
+		echo \"Firmware: $FIRMWARE    cloud-init: \$(cloud-init status | cut -d' ' -f2) (\$(cloud-init status --long | sed -n 's/^detail: //p'))\"
 		echo
-		. /etc/os-release; echo \"OS:          \$PRETTY_NAME (build \$BUILD_ID)\"
-		echo \"Kernel:      \$(uname -r)\"
-		echo \"Firmware:    $FIRMWARE\"
-		echo \"cloud-init:  \$(cloud-init status | cut -d' ' -f2) (\$(cloud-init status --long | sed -n 's/^detail: //p'))\"
-		echo \"Hostname:    \$(hostname)\"
-		echo \"Packages:    \$(dpkg-query -W | wc -l)\"
-		echo
-		ip -br -4 addr
-		echo
-		df -h /
+		fastfetch --pipe false
 	} >/dev/tty1"
 	sleep 1
 	shot=$ARTIFACT_DIR/boot-$FIRMWARE.png
