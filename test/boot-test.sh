@@ -13,6 +13,8 @@ IMAGE=$(realpath "${1:?usage: $0 IMAGE.qcow2 [bios|uefi] [1|2]}")
 FIRMWARE=${2:-bios}
 NET_VERSION=${3:-2}
 : "${BOOT_TIMEOUT:=600}"
+# Small by default so the test catches images that only boot on large VPS plans.
+: "${MEMORY:=512}"
 : "${SSH_PORT:=2222}"
 
 MAC=52:54:00:12:34:56
@@ -100,7 +102,7 @@ accel=tcg
 [[ -w /dev/kvm ]] && accel=kvm
 log "Booting with $accel acceleration"
 qemu-system-x86_64 \
-	-machine q35,accel=$accel -cpu max -smp 2 -m 2048 \
+	-machine q35,accel=$accel -cpu max -smp 2 -m "$MEMORY" \
 	"${fw_args[@]}" \
 	-drive "if=virtio,format=qcow2,file=$tmp/disk.qcow2" \
 	-drive "media=cdrom,format=raw,readonly=on,file=$tmp/seed.iso" \

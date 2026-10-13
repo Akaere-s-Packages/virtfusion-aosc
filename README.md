@@ -13,7 +13,8 @@ with cloud-init, intended as a VirtFusion OS template.
 - Root login via SSH with password or key (`disable_root: false`, `ssh_pwauth: true`,
   `PermitRootLogin yes`), plus a locked default user `aosc` with passwordless sudo
 - qemu-guest-agent (started automatically when the virtio channel exists)
-- Kernel console on `ttyS0` and `tty0`, timezone UTC, generic (non-hostonly) initramfs
+- Kernel console on `ttyS0` and `tty0`, timezone UTC
+- Slim generic initramfs (~21 MiB, VirtIO/SATA/NVMe storage drivers only), so VMs with 512 MiB of RAM boot
 - Generalized: empty machine-id, no SSH host keys, clean cloud-init state
 
 ## Requirements
@@ -74,6 +75,7 @@ Test environment variables:
 | `ROOT_PASSWORD` | random | Root password set through cloud-init. It is printed with the SSH command while the VM runs |
 | `SSH_PORT` | `2222` | Host port forwarded to the guest's SSH |
 | `BOOT_TIMEOUT` | `600` | Seconds to wait for SSH |
+| `MEMORY` | `512` | Guest RAM in MiB; small on purpose so the test catches images that need a large plan |
 
 ## CI and releases
 
