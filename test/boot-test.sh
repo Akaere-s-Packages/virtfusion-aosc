@@ -5,6 +5,8 @@
 #
 # Usage: test/boot-test.sh IMAGE.qcow2 [bios|uefi] [1|2]
 #   arg 2: firmware (default bios); arg 3: cloud-init network-config version (default 2)
+#   ARTIFACT_DIR=dir: after a pass, save the VGA console screenshot (boot-<firmware>.png),
+#   the installed package list (packages.tsv) and system info (system.env) there.
 set -Eeuo pipefail
 
 IMAGE=$(realpath "${1:?usage: $0 IMAGE.qcow2 [bios|uefi] [1|2]}")
@@ -107,8 +109,29 @@ qemu-system-x86_64 \
 	-device virtio-serial \
 	-chardev "socket,id=qga0,path=$tmp/qga.sock,server=on,wait=off" \
 	-device "virtserialport,chardev=qga0,name=org.qemu.guest_agent.0" \
-	-display none -serial "file:$tmp/serial.log" &
+	-display none -serial "file:$tmp/serial.log" \
+	-monitor "unix:$tmp/monitor.sock,server=on,wait=off" &
 qemu_pid=$!
+
+# Run one HMP (human monitor) command and wait for it to complete.
+hmp() {
+	python3 - "$tmp/monitor.sock" "$1" <<'PY'
+import socket, sys
+s = socket.socket(socket.AF_UNIX)
+s.connect(sys.argv[1])
+def until_prompt():
+    buf = b""
+    while not buf.endswith(b"(qemu) "):
+        chunk = s.recv(4096)
+        if not chunk:
+            break
+        buf += chunk
+    return buf
+until_prompt()
+s.sendall(sys.argv[2].encode() + b"\n")
+sys.stdout.write(until_prompt().decode(errors="replace").split("\n", 1)[-1].rsplit("(qemu)", 1)[0])
+PY
+}
 
 ssh_cmd=(ssh -q -i "$tmp/id" -p "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout=5
 	-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@127.0.0.1)
@@ -153,6 +176,67 @@ guest 'ls /sys/firmware/efi' >/dev/null 2>&1 && booted=uefi || booted=bios
 
 guest 'cat /etc/os-release; uname -r; df -h /; cloud-init --version' >&2
 log "PASS ($FIRMWARE, network-config v$NET_VERSION)"
+
+if [[ -n ${ARTIFACT_DIR:-} ]]; then
+	mkdir -p "$ARTIFACT_DIR"
+	ARTIFACT_DIR=$(realpath "$ARTIFACT_DIR")
+	guest "dpkg-query -W -f '\${Package}\t\${Version}\n'" | sort >"$ARTIFACT_DIR/packages.tsv"
+	guest 'cat /etc/os-release; echo "KERNEL=$(uname -r)"; echo "CLOUD_INIT=$(cloud-init --version 2>&1 | cut -d" " -f2)"' \
+		>"$ARTIFACT_DIR/system.env"
+	# Draw a summary on the VGA console (what VirtFusion's VNC shows), then capture it.
+	guest "{
+		printf '\033[2J\033[H'
+		echo '=== AOSC OS cloud image: boot test passed ($FIRMWARE, network-config v$NET_VERSION) ==='
+		echo
+		. /etc/os-release; echo \"OS:          \$PRETTY_NAME (build \$BUILD_ID)\"
+		echo \"Kernel:      \$(uname -r)\"
+		echo \"Firmware:    $FIRMWARE\"
+		echo \"cloud-init:  \$(cloud-init status | cut -d' ' -f2) (\$(cloud-init status --long | sed -n 's/^detail: //p'))\"
+		echo \"Hostname:    \$(hostname)\"
+		echo \"Packages:    \$(dpkg-query -W | wc -l)\"
+		echo
+		ip -br -4 addr
+		echo
+		df -h /
+	} >/dev/tty1"
+	sleep 1
+	shot=$ARTIFACT_DIR/boot-$FIRMWARE.png
+	rm -f "$shot"
+	# PPM is the one screendump format every QEMU build supports; convert it here
+	# instead of relying on QEMU being built with libpng.
+	hmp "screendump $tmp/screen.ppm" >&2
+	[[ -s $tmp/screen.ppm ]] || die "screendump failed"
+	python3 - "$tmp/screen.ppm" "$shot" <<'PY'
+import struct, sys, zlib
+data = open(sys.argv[1], "rb").read()
+fields, pos = [], 0
+while len(fields) < 4:  # P6 header: magic, width, height, maxval (comments allowed)
+    while data[pos:pos + 1].isspace():
+        pos += 1
+    if data[pos:pos + 1] == b"#":
+        pos = data.index(b"\n", pos)
+        continue
+    end = pos
+    while not data[end:end + 1].isspace():
+        end += 1
+    fields.append(data[pos:end])
+    pos = end
+assert fields[0] == b"P6" and fields[3] == b"255", fields
+w, h = int(fields[1]), int(fields[2])
+pixels = data[pos + 1:pos + 1 + w * h * 3]
+raw = b"".join(b"\0" + pixels[y * w * 3:(y + 1) * w * 3] for y in range(h))
+def chunk(kind, body):
+    return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
+with open(sys.argv[2], "wb") as f:
+    f.write(b"\x89PNG\r\n\x1a\n")
+    f.write(chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)))
+    f.write(chunk(b"IDAT", zlib.compress(raw, 9)))
+    f.write(chunk(b"IEND", b""))
+PY
+	[[ -s $shot ]] || die "screenshot not written to $shot"
+	log "Saved $shot, packages.tsv and system.env to $ARTIFACT_DIR"
+fi
+
 guest 'systemctl poweroff' || true
 wait "$qemu_pid" || true
 qemu_pid=

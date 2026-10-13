@@ -1,9 +1,12 @@
 name: Build and test image
 
-# Test-only pipeline: builds the image and boot-tests it. Nothing is
-# uploaded, released, or cached.
+# Every run builds the image and boot-tests it under BIOS and UEFI.
+# Pushing a tag v* additionally publishes a GitHub release with the image,
+# boot screenshots and the installed package list. Other runs keep nothing.
 on:
   push:
+    branches: ["**"]
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
   schedule:
@@ -20,8 +23,12 @@ jobs:
   build-test:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    permissions:
+      contents: write # create the release on tag pushes
     env:
       WORK_DIR: /mnt/aosc-work
+      IMAGE: output/aosc-os-cloud-amd64.qcow2
+      ARTIFACT_DIR: artifacts
     steps:
       - uses: actions/checkout@v5
 
@@ -36,13 +43,29 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            qemu-system-x86 qemu-utils ovmf xorriso jq curl xz-utils openssh-client
+            qemu-system-x86 qemu-utils ovmf xorriso jq curl xz-utils openssh-client python3
 
       - name: Build image
         run: sudo --preserve-env=WORK_DIR ./build.sh
 
       - name: Boot test (BIOS, network-config v2)
-        run: ./test/boot-test.sh output/aosc-os-cloud-amd64.qcow2 bios 2
+        run: ./test/boot-test.sh "$IMAGE" bios 2
 
       - name: Boot test (UEFI, network-config v1)
-        run: ./test/boot-test.sh output/aosc-os-cloud-amd64.qcow2 uefi 1
+        run: ./test/boot-test.sh "$IMAGE" uefi 1
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          size=$(stat -c %s "$IMAGE")
+          (( size < 2 * 1024 ** 3 )) || { echo "image is $size bytes; GitHub release assets must be < 2 GiB" >&2; exit 1; }
+          ./scripts/release-notes.sh "$ARTIFACT_DIR" "$IMAGE" "$GITHUB_REF_NAME" "$GITHUB_REPOSITORY" > notes.md
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "AOSC OS cloud image $GITHUB_REF_NAME" \
+            --notes-file notes.md \
+            "$IMAGE" "$IMAGE.sha256" \
+            "$ARTIFACT_DIR/boot-bios.png" "$ARTIFACT_DIR/boot-uefi.png" \
+            "$ARTIFACT_DIR/packages.tsv"

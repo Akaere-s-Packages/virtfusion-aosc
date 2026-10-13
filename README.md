@@ -66,11 +66,31 @@ and that the hostname, root filesystem growth, static networking, DNS, root pass
 and boot firmware are all as expected.
 The arguments are the firmware (`bios` or `uefi`) and the network-config version (`1` or `2`).
 
-## CI
+Test environment variables:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `ARTIFACT_DIR` | (unset) | After a pass, save the VGA console screenshot `boot-<firmware>.png`, the installed package list `packages.tsv` and `system.env` here |
+| `ROOT_PASSWORD` | random | Root password set through cloud-init. It is printed with the SSH command while the VM runs |
+| `SSH_PORT` | `2222` | Host port forwarded to the guest's SSH |
+| `BOOT_TIMEOUT` | `600` | Seconds to wait for SSH |
+
+## CI and releases
 
 `.github/workflows/build.yml` builds the image and runs both boot tests on every
-push, pull request, manual dispatch and weekly. It is test-only: no artifacts,
-releases or caches are kept.
+push, pull request, manual dispatch and weekly. These runs keep nothing.
+
+Pushing a tag starting with `v` runs the same build and tests and then publishes a GitHub release:
+
+```sh
+git tag v20261013
+git push origin v20261013
+```
+
+The release contains the qcow2 and its `.sha256`, the BIOS and UEFI boot screenshots, and
+`packages.tsv`. The release notes list the base, kernel and cloud-init versions, the image
+checksum, the embedded screenshots and every installed package with its version.
+GitHub limits release assets to 2 GiB, and the workflow fails before publishing if the image is larger.
 
 ## Using it in VirtFusion
 
